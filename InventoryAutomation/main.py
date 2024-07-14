@@ -13,40 +13,62 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %
 # Определение специальных штрихкодов для действий
 EXPORT_DATA_BARCODE = "EXPORT123"
 CLEAR_DATA_BARCODE = "CLEAR123"
+OPEN_BOX_BARCODE = "OPENBOX123"
+CLOSE_BOX_BARCODE = "CLOSEBOX123"
 
+current_box = None
 
 # Функция для создания и отображения штрихкодов
 def create_barcode(data, filename):
     barcode = Code128(data, writer=ImageWriter())
     barcode.save(filename)
 
-
 def display_barcodes():
     export_image = Image.open("export_barcode.png")
     clear_image = Image.open("clear_barcode.png")
+    open_box_image = Image.open("open_box_barcode.png")
+    close_box_image = Image.open("close_box_barcode.png")
+
     export_photo = ImageTk.PhotoImage(export_image)
     clear_photo = ImageTk.PhotoImage(clear_image)
+    open_box_photo = ImageTk.PhotoImage(open_box_image)
+    close_box_photo = ImageTk.PhotoImage(close_box_image)
 
-    export_label = ttk.Label(frame, image=export_photo)
-    export_label.image = export_photo
-    export_label.grid(row=3, column=0, pady=10)
+    export_label = ttk.Label(frame, text="Экспорт данных")
+    export_label.grid(row=4, column=0, pady=5)
+    export_image_label = ttk.Label(frame, image=export_photo)
+    export_image_label.image = export_photo
+    export_image_label.grid(row=5, column=0, pady=5)
 
-    clear_label = ttk.Label(frame, image=clear_photo)
-    clear_label.image = clear_photo
-    clear_label.grid(row=3, column=1, pady=10)
+    clear_label = ttk.Label(frame, text="Новая инвентаризация")
+    clear_label.grid(row=4, column=1, pady=5)
+    clear_image_label = ttk.Label(frame, image=clear_photo)
+    clear_image_label.image = clear_photo
+    clear_image_label.grid(row=5, column=1, pady=5)
 
+    open_box_label = ttk.Label(frame, text="Открыть короб")
+    open_box_label.grid(row=6, column=0, pady=5)
+    open_box_image_label = ttk.Label(frame, image=open_box_photo)
+    open_box_image_label.image = open_box_photo
+    open_box_image_label.grid(row=7, column=0, pady=5)
+
+    close_box_label = ttk.Label(frame, text="Закрыть короб")
+    close_box_label.grid(row=6, column=1, pady=5)
+    close_box_image_label = ttk.Label(frame, image=close_box_photo)
+    close_box_image_label.image = close_box_photo
+    close_box_image_label.grid(row=7, column=1, pady=5)
 
 # Функция для добавления товара в таблицу и обновления DataFrame
-def add_item(barcode, name, quantity):
+def add_item(barcode, name, quantity, box_number):
     global df
-    logging.debug(f"Adding item: {barcode}, {name}, {quantity}")
-    if barcode in df['Штрихкод'].values:
-        df.loc[df['Штрихкод'] == barcode, 'Количество'] += quantity
+    logging.debug(f"Adding item: {barcode}, {name}, {quantity}, box: {box_number}")
+    existing_item = df[(df['Штрихкод'] == barcode) & (df['Короб'] == box_number)]
+    if not existing_item.empty:
+        df.loc[(df['Штрихкод'] == barcode) & (df['Короб'] == box_number), 'Количество'] += quantity
     else:
-        new_row = pd.DataFrame({'Штрихкод': [barcode], 'Название товара': [name], 'Количество': [quantity]})
+        new_row = pd.DataFrame({'Штрихкод': [barcode], 'Название товара': [name], 'Количество': [quantity], 'Короб': [box_number]})
         df = pd.concat([df, new_row], ignore_index=True)
     update_table()
-
 
 def update_table():
     for row in tree.get_children():
@@ -55,12 +77,11 @@ def update_table():
         tree.insert("", "end", values=list(row))
     logging.debug("Table updated")
 
-
 def request_product_name(barcode):
     logging.debug(f"Requesting product name for barcode: {barcode}")
     name = simpledialog.askstring("Название товара", "Введите название товара для нового штрихкода:")
     if name:
-        add_item(barcode, name, 1)
+        add_item(barcode, name, 1, current_box)
         new_product = pd.DataFrame({'Штрихкод': [barcode], 'Название товара': [name]})
         global products
         products = pd.concat([products, new_product], ignore_index=True)
@@ -68,8 +89,8 @@ def request_product_name(barcode):
     barcode_var.set('')
     root.after(100, lambda: barcode_entry.focus())
 
-
 def scan_barcode(event=None):
+    global current_box
     barcode = barcode_var.get().strip()
     logging.debug(f"Scanned barcode: {barcode}")
     if barcode:
@@ -77,20 +98,24 @@ def scan_barcode(event=None):
             export_data()
         elif barcode == CLEAR_DATA_BARCODE:
             clear_data()
+        elif barcode == OPEN_BOX_BARCODE:
+            open_box()
+        elif barcode == CLOSE_BOX_BARCODE:
+            close_box()
+        elif current_box is None:
+            messagebox.showwarning("Короб не открыт", "Сначала откройте короб перед сканированием товаров.")
         elif barcode in products['Штрихкод'].values:
-            add_item(barcode, products.loc[products['Штрихкод'] == barcode, 'Название товара'].values[0], 1)
+            add_item(barcode, products.loc[products['Штрихкод'] == barcode, 'Название товара'].values[0], 1, current_box)
         else:
             root.after(100, request_product_name, barcode)  # Используем after для вызова диалога
         barcode_var.set('')
         root.after(100, lambda: barcode_entry.focus())
-
 
 def export_data():
     df.to_csv('inventory.csv', index=False)
     messagebox.showinfo("Экспорт данных", "Данные успешно экспортированы в файл inventory.csv")
     logging.debug("Data exported")
     root.after(100, lambda: barcode_entry.focus())
-
 
 def load_data():
     global df, products
@@ -103,27 +128,46 @@ def load_data():
         products = pd.DataFrame(columns=['Штрихкод', 'Название товара'])
     logging.debug("Data loaded")
 
-
 def on_closing():
     df.to_csv('inventory.csv', index=False)
     root.destroy()
     logging.debug("Application closed")
 
-
 def clear_data():
-    global df
+    global df, current_box
     if messagebox.askokcancel("Очистка данных",
                               "Вы уверены, что хотите начать новую инвентаризацию? Все текущие данные будут удалены."):
-        df = pd.DataFrame(columns=['Штрихкод', 'Название товара', 'Количество'])
+        df = pd.DataFrame(columns=['Штрихкод', 'Название товара', 'Количество', 'Короб'])
         update_table()
         messagebox.showinfo("Очистка данных",
                             "Данные текущей инвентаризации очищены. Вы можете начать новую инвентаризацию.")
         logging.debug("Data cleared")
+        current_box = None
         root.after(100, lambda: barcode_entry.focus())
 
+def open_box():
+    global current_box
+    if current_box is not None:
+        messagebox.showwarning("Короб уже открыт", "Закройте текущий короб перед открытием нового.")
+        return
+    current_box = simpledialog.askstring("Открыть короб", "Введите номер короба:")
+    if current_box:
+        messagebox.showinfo("Короб открыт", f"Короб {current_box} открыт.")
+    barcode_var.set('')
+    root.after(100, lambda: barcode_entry.focus())
+
+def close_box():
+    global current_box
+    if current_box is None:
+        messagebox.showwarning("Короб не открыт", "Сначала откройте короб.")
+    else:
+        messagebox.showinfo("Короб закрыт", f"Короб {current_box} закрыт.")
+        current_box = None
+    barcode_var.set('')
+    root.after(100, lambda: barcode_entry.focus())
 
 # Создаем или загружаем DataFrame для инвентаризации и продуктов
-df = pd.DataFrame(columns=['Штрихкод', 'Название товара', 'Количество'])
+df = pd.DataFrame(columns=['Штрихкод', 'Название товара', 'Количество', 'Короб'])
 products = pd.DataFrame(columns=['Штрихкод', 'Название товара'])
 
 # Интерфейс пользователя
@@ -141,21 +185,29 @@ barcode_entry.grid(row=0, column=1, sticky=(tk.W, tk.E))
 barcode_entry.bind("<Return>", scan_barcode)
 barcode_entry.focus()
 
-columns = ["Штрихкод", "Название товара", "Количество"]
+columns = ["Штрихкод", "Название товара", "Количество", "Короб"]
 tree = ttk.Treeview(frame, columns=columns, show="headings")
 for col in columns:
     tree.heading(col, text=col)
 tree.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S))
 
+open_box_button = ttk.Button(frame, text="Открыть короб", command=open_box)
+open_box_button.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+close_box_button = ttk.Button(frame, text="Закрыть короб", command=close_box)
+close_box_button.grid(row=2, column=1, sticky=(tk.W, tk.E, tk.N, tk.S))
+
 export_button = ttk.Button(frame, text="Экспорт данных", command=export_data)
-export_button.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+export_button.grid(row=3, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
 clear_button = ttk.Button(frame, text="Новая инвентаризация", command=clear_data)
-clear_button.grid(row=2, column=1, sticky=(tk.W, tk.E, tk.N, tk.S))
+clear_button.grid(row=3, column=1, sticky=(tk.W, tk.E, tk.N, tk.S))
 
 # Создаем штрихкоды для действий
-create_barcode(EXPORT_DATA_BARCODE, "export_barcode")
-create_barcode(CLEAR_DATA_BARCODE, "clear_barcode")
+create_barcode(EXPORT_DATA_BARCODE, "export_barcode.png")
+create_barcode(CLEAR_DATA_BARCODE, "clear_barcode.png")
+create_barcode(OPEN_BOX_BARCODE, "open_box_barcode.png")
+create_barcode(CLOSE_BOX_BARCODE, "close_box_barcode.png")
 
 # Отображаем штрихкоды на экране
 display_barcodes()
